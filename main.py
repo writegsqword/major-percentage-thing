@@ -1,26 +1,14 @@
 import json
 import os
 import matplotlib.pyplot as plt
-#Credits: https://stackoverflow.com/questions/2460177/edit-distance-in-python
-def levenshtein_distance(s1, s2):
-    s1 = s1.lower()
-    s2 = s2.lower()
-    if len(s1) > len(s2):
-        s1, s2 = s2, s1
-
-    distances = range(len(s1) + 1)
-    for i2, c2 in enumerate(s2):
-        distances_ = [i2+1]
-        for i1, c1 in enumerate(s1):
-            if c1 == c2:
-                distances_.append(distances[i1])
-            else:
-                distances_.append(1 + min((distances[i1], distances[i1 + 1], distances_[-1])))
-        distances = distances_
-    return distances[-1]
+from difflib import SequenceMatcher as SM
 
 known_majors = [
-    "Math",
+    ["Mathehatics", "Math"],
+    ["Biochemistry", "BioChem"],
+    ["Anthropology", "Anth"],
+    ["Linguistics", "ling"],
+    'Music',
     "Business",
     ["Aerospace Engineering", "Aerospace"],
     "Physics",
@@ -30,9 +18,11 @@ known_majors = [
     ["Cognitive Science","CogSci"],
     ["Literature", "Lit"],
     ["Computer Science", "CS", "CSE", "CompSci"],
+    ["Electrical Engineering", "EE"],
     ["Computer engineering", "CE"],
     ["Data Science", "DS"],
     "Data analysis",
+    ["Statistics", "Stats"],
     ["Psychology","Psych"],
     ["Communications", "Comm"],
     ["Biology","Bio"],
@@ -43,9 +33,14 @@ known_majors = [
     ["Math-Computer Science", "Math-CS", "Math-CompSci"],
     "Neuroscience",
     "Sociology",
-    "Undeclared"
+    "Undeclared",
+    "Studio",
+    ["ICAM"]
 ]
-
+blacklist = [
+    "at",
+    "college",
+]
 known_flat = []
 for m in known_majors:
     if type(m) == list:
@@ -65,8 +60,10 @@ def remap_flattened(major):
                 return m[0]
     return "Unknown"
 
-def extract_major(tokens : list):
-    global known_majors
+def extract_major(tokens : list, prev_major = "Unknown", max_score = 0):
+    global known_flat
+    global blacklist
+
     for i, t in enumerate(tokens):
         if not "major" in t.lower():
             continue
@@ -84,44 +81,52 @@ def extract_major(tokens : list):
             toks.append(tokens[i + 1])
             toks.append(tokens[i + 2])
             toks.append(tokens[i + 3])
+            toks.append(tokens[i + 4])
             toks.append(f"{tokens[i + 1]} {tokens[i + 2]}")
             toks.append(f"{tokens[i + 2]} {tokens[i + 3]}")
+            toks.append(f"{tokens[i + 1]} {tokens[i + 2]} {tokens[i + 3]}")
+            toks.append(f"{tokens[i + 3]} {tokens[i + 4]}")
+            toks.append(f"{tokens[i + 2]} {tokens[i + 3]} {tokens[i + 4]}")
         except:
             pass
-        min_lev = 0.5
-        major = "Unknown"
+        major = prev_major
         found_flag = False
         for tok in toks:
             for m in known_flat:
                 #if exact match found
                 if m.lower() == tok.lower():
-                    return major
+                    return (m, 99999)
 
         
         for tok in toks:
+            tok = tok.lower()
+            if tok in blacklist:
+                continue
             for m in known_flat:
+                
                 #dont check lev dist if its one of those meme abbreviations
                 if len(tok) < 5 and len(tok) == len(m):
                     continue
-                dist = levenshtein_distance(tok, m)
+                score = SM(None, m.lower(), tok).ratio()
                 toklen = len(tok)
-                dist *= 1 / (toklen * 2)
-                if dist >= min_lev:
+                #score *= 1 / (toklen * 2)
+                if score < max_score:
                     continue
-                min_lev = dist
+                max_score = score
                 #print(f"{major} ----------> {m} ||||| {tok}")
                 major = m
 
         if major == "Unknown":
             #print(toks)
-            return major
+            return (major, max_score)
         #print(f"Result: {major}")
-        return major
+        return (major, max_score)
 
 
 
 def process_data(msgs_list : list):
     majors_mapping = {}
+    majors_res_mapping = {}
     author_name_id_mapping = {}
     for entry in msgs_list:
         content : str = entry["content"]
@@ -130,12 +135,19 @@ def process_data(msgs_list : list):
         author : dict = entry["author"]
         author_name = author["name"]
         author_id = author["id"]
-        if author_id in majors_mapping.keys():
-            continue
         tokens = content.split()
- 
-        majors_mapping[author_id] = extract_major(tokens)
         author_name_id_mapping[author_id] = author_name
+        
+        if author_id in majors_res_mapping.keys():
+            prev_res = majors_res_mapping[author_id]
+            majors_res_mapping[author_id] = extract_major(tokens, prev_res[0], prev_res[1])
+            continue
+        majors_res_mapping[author_id] = extract_major(tokens, max_score=0.8)
+        #print(majors_res_mapping[author_id])
+ 
+    for k, v in majors_res_mapping.items():
+        majors_mapping[k] = v[0]
+        
     return majors_mapping
 
 
@@ -152,7 +164,7 @@ def main():
     majors_count_map = {}
     for k, v in majors_map.items():
         if v == "Unknown":
-            continue
+             continue
         v = remap_flattened(v)
         if not v in majors_count_map.keys():
             majors_count_map[v] = 1
@@ -165,11 +177,13 @@ def main():
 
     labels, nums = zip(*nl_tup)
     print(nums)
-    print(sum(nums))
-    #plt.pie(nums, labels=labels)
-    #plt.rcParams['font.size'] = 6
-    plt.xticks(rotation=45)
-    plt.bar(labels, nums)
+    tot=sum(nums)
+    plt.rcParams['font.size'] = 8
+    plt.pie(nums, labels=labels, autopct=lambda x : (('{:.4f}%\n({:.0f})'.format(x, tot*x/100)) if x > 3 else ''))
+    
+    print(tot)
+    # plt.xticks(rotation=45)
+    # plt.bar(labels, nums)
     plt.show()
 
 
